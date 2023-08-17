@@ -1,4 +1,3 @@
-# designing a web scrapper using beautiful soup and selenium
 import requests
 import os
 import csv
@@ -8,6 +7,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
 
 tags = [
     "brunch",
@@ -23,48 +23,25 @@ tags = [
     "work-wear",
 ]
 
+def scrapperRunner(file_name: str, response: str):
+    full_path = "./data/" + file_name
 
-def scrapperRunner(url_template: str, maxPage: int, file_name: str, response: str):
-    # for pageNo in range[1, maxPage + 1]:
-    #     url = url_template.format(pageNo=pageNo)
-    # response=requests.get(url)
-    # write response.content to file
-    # with open('response.html','w') as file:
-    #     file.write(response.content.decode('utf-8'))
-    # read response.content from file
-    # with open("response.html", "r") as file:
-    #     response = file.read()
+    # Create the directory if it doesn't exist
+    if not os.path.exists("./data/"):
+        os.makedirs("./data/")
+    
+    webContents = BeautifulSoup(response, "html.parser").find_all("div", class_="product-collection-block")
 
-    # print(response)
-    webContents = BeautifulSoup(response, "html.parser").find_all(
-        "div", class_="product-collection-block"
-    )
-    # print(webContents)
-    # webContents=BeautifulSoup(response.content,'html.parser').find_all('div',class_='product_group product-like-container')
+    if not os.path.isfile(full_path):
+        with open(full_path, mode="w", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(["mediaHeading", "description", "productTile", "image", "price", "vendor"])  # write header
 
-    # print(len(webContents))
-
-    # make a csv file and write the data to it , it have the following columns
-    with open(file_name, mode="w", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerow(
-            [
-                "mediaHeading",
-                "description",
-                "productTile",
-                "image",
-                "price",
-                "vendor",
-            ]
-        )  # write header
-
-    with open(file_name, mode="a", newline="") as file:
+    with open(full_path, mode="a", newline="") as file:
         writer = csv.writer(file)
 
         for product in webContents:
-            title = product.find(
-                "a", class_="product-title main_p_title main_p_title_1"
-            )
+            title = product.find("a", class_="product-title main_p_title main_p_title_1")
             if title is not None:
                 title = title.text.strip()
             else:
@@ -75,7 +52,7 @@ def scrapperRunner(url_template: str, maxPage: int, file_name: str, response: st
                 summary = summary.text.strip()
             else:
                 summary = ""
-            # print(title,summary)
+            
             productLists = product.find_all("div", class_="product-block")
             for item in productLists:
                 image = item.find("img")
@@ -86,41 +63,53 @@ def scrapperRunner(url_template: str, maxPage: int, file_name: str, response: st
                 itemTitle = item["data-title"]
                 itemPrice = item["data-price"]
                 itemVendor = item["data-vendor"] or "vogue"
-                writer.writerow(
-                    [title, summary, itemTitle, image, itemPrice, itemVendor]
-                )
+                writer.writerow([title, summary, itemTitle, image, itemPrice, itemVendor])
 
-        print(os.path.getsize(file_name))
-    return True
+        print(os.path.getsize(full_path))
 
+def is_next_button_clickable(driver):
+    try:
+        next_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.CLASS_NAME, "next-link"))
+        )
+        return next_button
+    except TimeoutException:
+        return None
+
+def automaker(url: str, file_name: str):
+    driver = webdriver.Chrome()
+    driver.get(url)
+
+    WebDriverWait(driver, 10).until(
+        EC.visibility_of_element_located((By.CLASS_NAME, "product-collection-block"))
+    )
+
+    while True:
+        try:
+            page_source = driver.page_source
+            scrapperRunner(file_name, page_source)
+
+            next_button = is_next_button_clickable(driver)
+            if next_button:
+                next_button.click()
+                WebDriverWait(driver, 10).until(EC.staleness_of(next_button))
+            else:
+                break
+        except NoSuchElementException:
+            print("Next button not found. Exiting...")
+            break
+        except Exception as e:
+            print(f"Error: {e}")
+            break
+
+    driver.quit()
 
 def main():
-    url_template = "https://www.vogue.in/vogue-closet/?order_by=recent&occasion={occasion}&product-type=bags,clothing,costume-jewellery,fine-jewellery,shoes&page_no={pageNo}"
+    url_template1 = "https://www.vogue.in/vogue-closet/?order_by=recent&occasion={occasion}&product-type=bags,clothing,costume-jewellery,fine-jewellery,shoes&"
 
     for tag in tags:
-        pageNo = 1
-        url = url_template.format(pageNo=pageNo, occasion=tag)
-        response = requests.get(url).content.decode("utf-8")
-
-        maxPage = BeautifulSoup(response, "html.parser").find(
-            "div", class_="pagination"
-        )
-
-        if maxPage is not None:
-            maxPage = int(maxPage.find_all("a")[-2].text.strip())
-        else:
-            maxPage = 1
-
-        for pageNo in range(1, maxPage + 1):
-            print(pageNo)
-            url = url_template.format(pageNo=pageNo, occasion=tag)
-            response = requests.get(url).content.decode("utf-8")
-            # print(response)
-            file_name = f"{tag}.csv"
-            scrapperRunner(url_template, maxPage, file_name, response)
-            print(f"Done with {tag} page {pageNo}")
-            # break
-        # break
-
+        url = url_template1.format(occasion=tag)
+        file_name = f"{tag}.csv"
+        automaker(url, file_name)
 
 main()
